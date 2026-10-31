@@ -202,15 +202,57 @@ export async function captureText($: Engine, target: Pane, lines?: number): Prom
 }
 
 /** The owned terminal's screen and cursor, for the pane beside the chat. */
-export async function captureOwnedScreen($: Engine): Promise<Screen | undefined> {
+export async function captureOwnedScreen(
+  $: Engine,
+  view: { scrolled: number; rows: number } = { scrolled: 0, rows: 0 },
+): Promise<Screen | undefined> {
   const mine = await read($, owned)
   if (mine === null) return undefined
+  const target = sessionTarget(mine.session)
+  // Line 0 is the top of the screen, so scrollback counts below it.
+  const range = view.scrolled > 0 && view.rows > 0
+    ? ['-S', String(-view.scrolled), '-E', String(view.rows - 1 - view.scrolled)]
+    : []
   const { ok, stdout } = await tmux($, SOCKET, [
-    'capture-pane', '-p', '-e', '-t', sessionTarget(mine.session),
-    ';', 'display-message', '-p', '-t', sessionTarget(mine.session), '#{cursor_x} #{cursor_y} #{cursor_flag}',
+    'capture-pane', '-p', '-e', '-t', target, ...range,
+    ';', 'display-message', '-p', '-t', target, '#{cursor_x} #{cursor_y} #{cursor_flag} #{alternate_on} #{history_size}',
   ])
 
   return ok ? parseScreen(stdout) : undefined
+}
+
+/** Pastes through a tmux buffer, bracketed where the program asks for that. */
+export async function pasteOwned($: Engine, text: string): Promise<void> {
+  const mine = await read($, owned)
+  if (mine === null) return
+  const buffer = 'terminal-mod-paste'
+  const argv = ['tmux', '-L', SOCKET, 'load-buffer', '-b', buffer, '-']
+  const { exitCode } = await $.process.run(argv, { stdin: text, timeoutMs: 5000 })
+  if (exitCode !== 0) throw new TerminalError('tmux could not take the text.')
+  await tmux($, SOCKET, ['paste-buffer', '-d', '-p', '-b', buffer, '-t', sessionTarget(mine.session)])
+}
+
+/** The clipboard's text, from the first tool this machine has that answers. */
+export async function readClipboard($: Engine): Promise<string | undefined> {
+  const isWsl = (await $.env.get('WSL_DISTRO_NAME')) !== undefined
+  const windows = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw']
+  const tools = [
+    ...(isWsl ? [windows] : []),
+    ['pbpaste'],
+    ['wl-paste', '--no-newline'],
+    ['xclip', '-selection', 'clipboard', '-o'],
+    ['xsel', '--clipboard', '--output'],
+  ]
+  for (const argv of tools) {
+    try {
+      const { exitCode, stdout } = await $.process.run(argv, { timeoutMs: 5000 })
+      if (exitCode === 0) return stdout
+    } catch {
+      // That tool is not on this machine; the next may be.
+    }
+  }
+
+  return undefined
 }
 
 export async function resizeOwned($: Engine, columns: number, rows: number): Promise<void> {

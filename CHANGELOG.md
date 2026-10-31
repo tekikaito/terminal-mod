@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+The pane scrolls through the terminal's history (wheel, PageUp, PageDown) and pastes the clipboard
+(Ctrl-V, Alt-V, Paste button).
+
 ## 0.2.0
 
 The pane beside the chat shows colours and text attributes.

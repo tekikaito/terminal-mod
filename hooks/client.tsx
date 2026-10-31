@@ -9,6 +9,8 @@ export type ViewProps = {
   cursor: { x: number; y: number } | null
   rows: number
   note?: string
+  /** Lines scrolled up from the bottom; 0 or absent at the live screen. */
+  scrolled?: number
 }
 
 type Local = { queue: ClientKeyEvent[]; ticks: number; eager: number }
@@ -75,7 +77,11 @@ const Terminal: ClientModule<ViewProps, Local> = (props, surface) => {
 
   return (
     <Box flexDirection="column">
-      {props.lines.slice(0, props.rows).map((spans, y) => {
+      {(props.scrolled ?? 0) > 0 && (
+        <Text inverse wrap="truncate-end">{` ${props.scrolled} lines up · PgDn or wheel to go back, typing returns `}</Text>
+      )}
+      {props.lines.slice((props.scrolled ?? 0) > 0 ? 1 : 0, props.rows).map((spans, row) => {
+        const y = row
         const runs = props.cursor?.y === y ? markCursor(spans, props.cursor.x) : spans
         if (runs.length === 0) return <Text wrap="truncate-end"> </Text>
 

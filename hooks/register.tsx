@@ -1,15 +1,15 @@
 import type { EngineInterface, PromptOrigin, Register } from 'claude-code'
 
-import { clampLines, fenceOutput, findMentions, isPaneId, keysToTmux, oneLine, withoutStyles, refuseCommand, replaceMentions } from './lib'
+import { clampLines, clampScroll, cleanPaste, MAX_PASTE_CHARS, splitKeys, fenceOutput, findMentions, isPaneId, keysToTmux, oneLine, withoutStyles, refuseCommand, replaceMentions } from './lib'
 import type { KeyEvent, TmuxKeys } from './lib'
-import { captureOwnedScreen, captureText, getPinned, killOwned, listAllPanes, pressOwned, resizeOwned, resolveTerminal, selfPane, sendCommand, setPinned, TerminalError } from './terminal'
+import { captureOwnedScreen, captureText, pasteOwned, readClipboard, getPinned, killOwned, listAllPanes, pressOwned, resizeOwned, resolveTerminal, selfPane, sendCommand, setPinned, TerminalError } from './terminal'
 import type { Pane } from './terminal'
 import type { ViewProps } from './client'
 
 const PANE_ID = 'terminal'
 const READ_TOOL = 'mcp__terminal-mod__terminal_read'
 const SEND_TOOL = 'mcp__terminal-mod__terminal_send'
-const HINT = 'Click the terminal to type · Esc leaves it'
+const HINT = 'Click to type · Esc leaves'
 const CLOSED = 'The terminal is closed. Run /term to start a new one.'
 
 type Engine = EngineInterface
@@ -52,18 +52,30 @@ let cwd: string | undefined
 let isReadGranted = false
 let lastSize = ''
 let lastRows = 0
+let scrolled = 0
+let history = 0
+let isAlternate = false
 let keyChain: Promise<unknown> = Promise.resolve()
 const MAX_VIEW_CHARS = 90_000
 let lastView = ''
 let isRefreshing = false
 
 async function view($: Engine, rows: number) {
-  const screen = await captureOwnedScreen($).catch(() => undefined)
+  const screen = await captureOwnedScreen($, { scrolled, rows }).catch(() => undefined)
   // A terminal started later is a new one, and needs sizing again.
-  if (screen === undefined) lastSize = ''
+  if (screen === undefined) {
+    lastSize = ''
+    scrolled = 0
+  } else {
+    history = screen.history
+    isAlternate = screen.isAlternate
+    // A full-screen program has no scrollback of its own to look at.
+    if (isAlternate) scrolled = 0
+    else scrolled = clampScroll(scrolled, 0, history)
+  }
   let drawn: ViewProps = screen === undefined
     ? { lines: [], cursor: null, rows, note: CLOSED }
-    : { lines: screen.lines, cursor: screen.cursor, rows }
+    : { lines: screen.lines, cursor: scrolled > 0 ? null : screen.cursor, rows, scrolled }
   lastView = JSON.stringify(drawn)
   // Props past their bound would unmount the view: better a screen without color.
   if (lastView.length > MAX_VIEW_CHARS) {
@@ -97,6 +109,25 @@ function pressKeys($: Engine, keys: readonly TmuxKeys[]): Promise<unknown> {
   keyChain = keyChain
     .then(() => pressOwned($, keys))
     .catch(() => undefined)
+
+  return keyChain
+}
+
+/** The clipboard into the terminal, in its turn after the keys before it. */
+function pasteClipboard($: Engine): Promise<unknown> {
+  keyChain = keyChain
+    .then(async () => {
+      const text = cleanPaste((await readClipboard($)) ?? '')
+      if (text === '') {
+        $.ui.toast('Nothing to paste: the clipboard is empty, or no clipboard tool answered.')
+      } else if (text.length > MAX_PASTE_CHARS) {
+        $.ui.toast('The clipboard holds too much text to paste.')
+      } else {
+        scrolled = 0
+        await pasteOwned($, text)
+      }
+    })
+    .catch(() => $.ui.toast('The paste failed.'))
 
   return keyChain
 }
@@ -324,16 +355,40 @@ export const register: Register = on => {
           <Button key="ctrl-c" onPress={() => pressKeys($, [{ key: 'C-c' }])}>Ctrl-C</Button>
           <Button key="ctrl-d" onPress={() => pressKeys($, [{ key: 'C-d' }])}>Ctrl-D</Button>
           <Button key="esc" onPress={() => pressKeys($, [{ key: 'Escape' }])}>Esc</Button>
+          <Button key="paste" onPress={() => pasteClipboard($)}>Paste</Button>
           <Text dimColor>{HINT}</Text>
         </Box>
       </Box>
     )
   })
 
+  // The wheel: the view's own rows never scroll, the terminal behind them does.
+  on('ui.scroll', { requestId: PANE_ID }, async ($, e) => {
+    if (e.origin.kind !== 'person') return {}
+    if (isAlternate) {
+      await pressKeys($, Array.from({ length: Math.min(10, Math.abs(e.by)) }, () => ({ key: e.by < 0 ? 'Up' : 'Down' })))
+    } else {
+      scrolled = clampScroll(scrolled, -e.by, history)
+      $.ui.invalidate('ui.render')
+    }
+
+    return {}
+  })
+
   on('ui.message', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
     const data = e.data as { keys?: unknown; size?: { columns?: unknown; rows?: unknown } } | null
     if (Array.isArray(data?.keys)) {
-      await pressKeys($, keysToTmux(data.keys as KeyEvent[]))
+      for (const step of splitKeys(data.keys as KeyEvent[], isAlternate)) {
+        if ('paste' in step) {
+          await pasteClipboard($)
+        } else if ('page' in step) {
+          scrolled = clampScroll(scrolled, step.page * Math.max(1, lastRows - 1), history)
+        } else {
+          const keys = keysToTmux(step.keys)
+          if (keys.length > 0) scrolled = 0
+          await pressKeys($, keys)
+        }
+      }
 
       return lastRows > 0 ? refresh($, lastRows) : {}
     }

@@ -190,6 +190,10 @@ export type Span = { t: string; s?: Style }
 export type Screen = {
   lines: Span[][]
   cursor: { x: number; y: number } | null
+  /** A full-screen program holds the terminal: scroll and paste keys are its own. */
+  isAlternate: boolean
+  /** Lines of scrollback above the screen. */
+  history: number
 }
 
 const BASE_COLORS = [
@@ -318,16 +322,64 @@ export function withoutStyles(lines: readonly Span[][]): Span[][] {
   })
 }
 
-/** Reads `capture-pane -p -e` output followed by one `x y flag` line. */
+/** Reads `capture-pane -p -e` output followed by one status line. */
 export function parseScreen(stdout: string): Screen {
   const all = stdout.replace(/\n$/, '').split('\n')
-  const status = /^(\d+) (\d+) ([01])$/.exec(all.at(-1) ?? '')
-  if (status === null) return { lines: parseStyledLines(all), cursor: null }
+  const status = /^(\d+) (\d+) ([01]) ([01]) (\d+)$/.exec(all.at(-1) ?? '')
+  if (status === null) {
+    return { lines: parseStyledLines(all), cursor: null, isAlternate: false, history: 0 }
+  }
   all.pop()
 
   return {
     lines: parseStyledLines(all),
     cursor:
       status[3] === '1' ? { x: Number(status[1]), y: Number(status[2]) } : null,
+    isAlternate: status[4] === '1',
+    history: Number(status[5]),
   }
+}
+
+export const MAX_PASTE_CHARS = 1_000_000
+
+/**
+ * Clipboard text as a terminal may take it: no escape can end a bracketed paste,
+ * and no newline at its end can run the last line unasked.
+ */
+export function cleanPaste(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\p{Cc}\p{Cf}]/gu, char => (char === '\n' || char === '\t' ? char : ''))
+    .replace(/\n+$/, '')
+}
+
+/** Lines scrolled up from the bottom, after moving by `by`, up being positive. */
+export function clampScroll(current: number, by: number, history: number): number {
+  return Math.min(history, Math.max(0, current + Math.trunc(by)))
+}
+
+export type KeyStep = { keys: KeyEvent[] } | { paste: true } | { page: 1 | -1 }
+
+/**
+ * Splits pressed keys, in order, into what goes to the terminal and what the
+ * view answers itself. A full-screen program gets every key: they are its own.
+ */
+export function splitKeys(events: readonly KeyEvent[], isAlternate: boolean): KeyStep[] {
+  const steps: KeyStep[] = []
+  for (const event of events) {
+    const isPlain = event.ctrl !== true && event.meta !== true
+    let own: KeyStep | undefined
+    if (!isAlternate && event.key === 'v' && (event.ctrl === true || event.meta === true)) own = { paste: true }
+    else if (!isAlternate && isPlain && event.key === 'pageup') own = { page: 1 }
+    else if (!isAlternate && isPlain && event.key === 'pagedown') own = { page: -1 }
+    if (own !== undefined) {
+      steps.push(own)
+      continue
+    }
+    const last = steps.at(-1)
+    if (last !== undefined && 'keys' in last) last.keys.push(event)
+    else steps.push({ keys: [event] })
+  }
+
+  return steps
 }

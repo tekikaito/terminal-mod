@@ -40,6 +40,14 @@ Claude gets two tools: `terminal_read` and `terminal_send`.
 To type in the pane, click it; Esc gives the keyboard back to the prompt. Since Esc never reaches
 the terminal that way, the pane has an **Esc** button, along with **Ctrl-C** and **Ctrl-D**.
 
+The mouse wheel, PageUp and PageDown scroll through the terminal's history, and typing returns to
+the live screen. **Ctrl-V**, **Alt-V** or the **Paste** button pastes the clipboard (through `powershell.exe` on
+WSL, else `pbpaste`, `wl-paste`, `xclip` or `xsel`). A final line break is dropped, so a paste never
+runs anything by itself. Your terminal's own paste (right click, or Ctrl-V in Windows Terminal, which keeps that
+key) always lands in the prompt box, because Claude Code hands it there; use Alt-V or the button.
+While a full-screen program such as `vim` runs, these keys go to it, and
+the wheel arrives as arrow keys; the Paste button still pastes.
+
 To write the word itself in a prompt without it being replaced, put it in backticks: `` `@term` ``.
 If the file picker is open after typing `@term`, the first Enter closes it and the second sends.
 
@@ -66,10 +74,8 @@ rules that guard Claude's Bash tool. So:
 
 ## Limits
 
-- The pane beside the chat shows only the screen, in standard colours rather than your own terminal
-  theme, and drops the colours of a screen too heavy to redraw: scroll with the
-  terminal's own tools (`less`, `tmux -L claude-terminal-mod attach`). For full fidelity, run Claude
-  in tmux.
+- The pane beside the chat uses standard colours rather than your own terminal theme, and drops the
+  colours of a screen too heavy to redraw. For full fidelity, run Claude in tmux.
 - The pane docks at the side in a fullscreen terminal of 110 columns or more; elsewhere it sits above
   the prompt.
 - It needs a surface with a terminal view. VS Code and mobile get `/term` and `@term` only.

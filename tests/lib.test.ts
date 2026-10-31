@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { clampLines, fenceOutput, findMentions, keysToTmux, MAX_OUTPUT_CHARS, paletteColor, parseScreen, parseStyledLines, refuseCommand, replaceMentions, sanitize, tmuxArg, tmuxPath } from '../hooks/lib'
+import { clampLines, fenceOutput, findMentions, keysToTmux, MAX_OUTPUT_CHARS, paletteColor, parseScreen, parseStyledLines, cleanPaste, clampScroll, refuseCommand, splitKeys, replaceMentions, sanitize, tmuxArg, tmuxPath } from '../hooks/lib'
 
 describe('mentions', () => {
   test('finds a mention standing alone, with or without a line count', async () => {
@@ -96,8 +96,8 @@ describe('keysToTmux', () => {
 
 describe('parseScreen', () => {
   test('splits the screen from the cursor line', async () => {
-    expect(parseScreen('a\n\nb\n3 2 1\n')).toEqual({ lines: [[{ t: 'a' }], [], [{ t: 'b' }]], cursor: { x: 3, y: 2 } })
-    expect(parseScreen('a\n3 0 0\n').cursor).toBeNull()
+    expect(parseScreen('a\n\nb\n3 2 1 0 7\n')).toEqual({ lines: [[{ t: 'a' }], [], [{ t: 'b' }]], cursor: { x: 3, y: 2 }, isAlternate: false, history: 7 })
+    expect(parseScreen('a\n3 0 0 1 0\n').cursor).toBeNull()
   })
 })
 
@@ -124,7 +124,7 @@ describe('parseStyledLines', () => {
   })
 
   test('drops every other sequence, and all control characters', async () => {
-    expect(parseStyledLines([`a${E}]8;;http://x${E}\b${E}[2Kc\u0007d${E}`])[0]).toEqual([{ t: 'abcd' }])
+    expect(parseStyledLines([`a${E}]8;;http://x${E}${String.fromCharCode(92)}b${E}[2Kc\u0007d${E}`])[0]).toEqual([{ t: 'abcd' }])
   })
 
   test('the 256 palette is the xterm one', async () => {
@@ -132,5 +132,39 @@ describe('parseStyledLines', () => {
     expect(paletteColor(231)).toBe('#ffffff')
     expect(paletteColor(232)).toBe('#080808')
     expect(paletteColor(256)).toBeUndefined()
+  })
+})
+
+describe('cleanPaste', () => {
+  test('keeps lines and tabs, and cannot end a bracketed paste or run a last line', async () => {
+    expect(cleanPaste('a\r\n\tb\u001b[201~c\r\n')).toBe('a\n\tb[201~c')
+  })
+})
+
+describe('clampScroll', () => {
+  test('stays between the bottom and the oldest line', async () => {
+    expect(clampScroll(5, -9, 100)).toBe(0)
+    expect(clampScroll(5, 200, 100)).toBe(100)
+    expect(clampScroll(5, 3, 100)).toBe(8)
+  })
+})
+
+describe('splitKeys', () => {
+  test('keeps order, and takes page keys and Ctrl-V for the view on the normal screen', async () => {
+    expect(splitKeys([{ key: 'a' }, { key: 'v', ctrl: true }, { key: 'pageup' }, { key: 'b' }], false)).toEqual([
+      { keys: [{ key: 'a' }] },
+      { paste: true },
+      { page: 1 },
+      { keys: [{ key: 'b' }] },
+    ])
+  })
+
+  test('Alt-V pastes too, for terminals that keep Ctrl-V', async () => {
+    expect(splitKeys([{ key: 'v', meta: true }], false)).toEqual([{ paste: true }])
+  })
+
+  test('a full-screen program gets them all', async () => {
+    const events = [{ key: 'pageup' }, { key: 'v', ctrl: true }]
+    expect(splitKeys(events, true)).toEqual([{ keys: events }])
   })
 })
