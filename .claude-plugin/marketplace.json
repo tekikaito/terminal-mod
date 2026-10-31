@@ -1,0 +1,5 @@
+{
+  "name": "terminal-mod",
+  "owner": { "name": "Marc Gilbrecht" },
+  "plugins": [{ "name": "terminal-mod", "source": "./" }]
+}
