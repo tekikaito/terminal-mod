@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { clampLines, fenceOutput, findMentions, keysToTmux, MAX_OUTPUT_CHARS, parseScreen, refuseCommand, replaceMentions, sanitize, tmuxArg, tmuxPath } from '../hooks/lib'
+import { clampLines, fenceOutput, findMentions, keysToTmux, MAX_OUTPUT_CHARS, paletteColor, parseScreen, parseStyledLines, refuseCommand, replaceMentions, sanitize, tmuxArg, tmuxPath } from '../hooks/lib'
 
 describe('mentions', () => {
   test('finds a mention standing alone, with or without a line count', async () => {
@@ -96,7 +96,41 @@ describe('keysToTmux', () => {
 
 describe('parseScreen', () => {
   test('splits the screen from the cursor line', async () => {
-    expect(parseScreen('a\n\nb\n3 2 1\n')).toEqual({ lines: ['a', '', 'b'], cursor: { x: 3, y: 2 } })
+    expect(parseScreen('a\n\nb\n3 2 1\n')).toEqual({ lines: [[{ t: 'a' }], [], [{ t: 'b' }]], cursor: { x: 3, y: 2 } })
     expect(parseScreen('a\n3 0 0\n').cursor).toBeNull()
+  })
+})
+
+describe('parseStyledLines', () => {
+  const E = '\u001b'
+
+  test('reads colors of every depth and resets', async () => {
+    expect(parseStyledLines([`a${E}[31mb${E}[38;5;196mc${E}[48;2;1;2;255md${E}[0me`])[0]).toEqual([
+      { t: 'a' },
+      { t: 'b', s: { f: '#cd3131' } },
+      { t: 'c', s: { f: '#ff0000' } },
+      { t: 'd', s: { f: '#ff0000', b: '#0102ff' } },
+      { t: 'e' },
+    ])
+    expect(parseStyledLines([`${E}[38:2::1:2:3mx`])[0]).toEqual([{ t: 'x', s: { f: '#010203' } }])
+  })
+
+  test('a style runs on into the next line, as tmux writes it', async () => {
+    expect(parseStyledLines([`${E}[1;32mx`, 'y', `${E}[22;39mz`])).toEqual([
+      [{ t: 'x', s: { B: true, f: '#0dbc79' } }],
+      [{ t: 'y', s: { B: true, f: '#0dbc79' } }],
+      [{ t: 'z' }],
+    ])
+  })
+
+  test('drops every other sequence, and all control characters', async () => {
+    expect(parseStyledLines([`a${E}]8;;http://x${E}\b${E}[2Kc\u0007d${E}`])[0]).toEqual([{ t: 'abcd' }])
+  })
+
+  test('the 256 palette is the xterm one', async () => {
+    expect(paletteColor(16)).toBe('#000000')
+    expect(paletteColor(231)).toBe('#ffffff')
+    expect(paletteColor(232)).toBe('#080808')
+    expect(paletteColor(256)).toBeUndefined()
   })
 })

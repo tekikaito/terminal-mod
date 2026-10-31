@@ -1,9 +1,10 @@
 import type { EngineInterface, PromptOrigin, Register } from 'claude-code'
 
-import { clampLines, fenceOutput, findMentions, isPaneId, keysToTmux, oneLine, refuseCommand, replaceMentions } from './lib'
+import { clampLines, fenceOutput, findMentions, isPaneId, keysToTmux, oneLine, withoutStyles, refuseCommand, replaceMentions } from './lib'
 import type { KeyEvent, TmuxKeys } from './lib'
 import { captureOwnedScreen, captureText, getPinned, killOwned, listAllPanes, pressOwned, resizeOwned, resolveTerminal, selfPane, sendCommand, setPinned, TerminalError } from './terminal'
 import type { Pane } from './terminal'
+import type { ViewProps } from './client'
 
 const PANE_ID = 'terminal'
 const READ_TOOL = 'mcp__terminal-mod__terminal_read'
@@ -52,6 +53,7 @@ let isReadGranted = false
 let lastSize = ''
 let lastRows = 0
 let keyChain: Promise<unknown> = Promise.resolve()
+const MAX_VIEW_CHARS = 90_000
 let lastView = ''
 let isRefreshing = false
 
@@ -59,10 +61,15 @@ async function view($: Engine, rows: number) {
   const screen = await captureOwnedScreen($).catch(() => undefined)
   // A terminal started later is a new one, and needs sizing again.
   if (screen === undefined) lastSize = ''
-  const drawn = screen === undefined
+  let drawn: ViewProps = screen === undefined
     ? { lines: [], cursor: null, rows, note: CLOSED }
     : { lines: screen.lines, cursor: screen.cursor, rows }
   lastView = JSON.stringify(drawn)
+  // Props past their bound would unmount the view: better a screen without color.
+  if (lastView.length > MAX_VIEW_CHARS) {
+    drawn = { ...drawn, lines: withoutStyles(drawn.lines) }
+    lastView = JSON.stringify(drawn)
+  }
 
   return drawn
 }

@@ -4,7 +4,7 @@ A terminal beside the Claude Code chat, connected both ways: pull what it shows 
 with `@term`, and let Claude send it commands, each one confirmed by you.
 
 - **Runs in tmux?** The mod connects to the pane next to Claude. You keep a real terminal with
-  colours, scrolling and everything else tmux gives you.
+  your own theme, scrolling and everything else tmux gives you.
 - **Not in tmux?** `/term` starts a terminal in a pane beside the chat, on a private tmux server.
 
 ## Install
@@ -66,7 +66,8 @@ rules that guard Claude's Bash tool. So:
 
 ## Limits
 
-- The pane beside the chat shows plain text without colours, and only the screen: scroll with the
+- The pane beside the chat shows only the screen, in standard colours rather than your own terminal
+  theme, and drops the colours of a screen too heavy to redraw: scroll with the
   terminal's own tools (`less`, `tmux -L claude-terminal-mod attach`). For full fidelity, run Claude
   in tmux.
 - The pane docks at the side in a fullscreen terminal of 110 columns or more; elsewhere it sits above

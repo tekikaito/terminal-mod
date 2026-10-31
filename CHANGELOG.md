@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0
+
+The pane beside the chat shows colours and text attributes.
+
 ## 0.1.1
 
 Smoother pane: an unchanged screen no longer redraws, typing shows at once, and an older screen can

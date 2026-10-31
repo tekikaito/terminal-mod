@@ -206,7 +206,7 @@ export async function captureOwnedScreen($: Engine): Promise<Screen | undefined>
   const mine = await read($, owned)
   if (mine === null) return undefined
   const { ok, stdout } = await tmux($, SOCKET, [
-    'capture-pane', '-p', '-t', sessionTarget(mine.session),
+    'capture-pane', '-p', '-e', '-t', sessionTarget(mine.session),
     ';', 'display-message', '-p', '-t', sessionTarget(mine.session), '#{cursor_x} #{cursor_y} #{cursor_flag}',
   ])
 

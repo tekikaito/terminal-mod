@@ -175,20 +175,158 @@ export function keysToTmux(events: readonly KeyEvent[]): TmuxKeys[] {
   return out
 }
 
+/** How a run of text is painted; keys kept short, as a whole screen travels as props. */
+export type Style = {
+  f?: string
+  b?: string
+  B?: true
+  d?: true
+  i?: true
+  u?: true
+  v?: true
+}
+export type Span = { t: string; s?: Style }
+
 export type Screen = {
-  lines: string[]
+  lines: Span[][]
   cursor: { x: number; y: number } | null
 }
 
-/** Reads `capture-pane -p` output followed by one `x y flag` line. */
+const BASE_COLORS = [
+  '#000000', '#cd3131', '#0dbc79', '#e5e510', '#2472c8', '#bc3fbc', '#11a8cd', '#e5e5e5',
+  '#666666', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#ffffff',
+]
+
+const hex = (r: number, g: number, b: number): string =>
+  `#${[r, g, b].map(n => Math.min(255, Math.max(0, n)).toString(16).padStart(2, '0')).join('')}`
+
+/** One of the 256 colors of the xterm palette, as hex. */
+export function paletteColor(index: number): string | undefined {
+  if (!Number.isInteger(index) || index < 0 || index > 255) return undefined
+  if (index < 16) return BASE_COLORS[index]
+  if (index >= 232) {
+    const grey = 8 + (index - 232) * 10
+
+    return hex(grey, grey, grey)
+  }
+  const level = (n: number): number => (n === 0 ? 0 : 55 + n * 40)
+  const cube = index - 16
+
+  return hex(level(Math.floor(cube / 36)), level(Math.floor(cube / 6) % 6), level(cube % 6))
+}
+
+/** The color an extended SGR asks for, from what follows its 38 or 48. */
+function extendedColor(rest: readonly number[]): { color?: string; used: number } {
+  if (rest[0] === 5) return { color: paletteColor(rest[1] ?? -1), used: 2 }
+  if (rest[0] === 2) {
+    return { color: hex(rest[1] ?? 0, rest[2] ?? 0, rest[3] ?? 0), used: 4 }
+  }
+
+  return { used: rest.length }
+}
+
+function applySgr(style: Style, params: string): Style {
+  let next = { ...style }
+  const parts = params === '' ? ['0'] : params.split(';')
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i] ?? ''
+    if (part.includes(':')) {
+      // 38:2::r:g:b, 38:2:r:g:b, 38:5:n or 4:3
+      const fields = part.split(':')
+      const code = Number(fields[0])
+      if (code === 38 || code === 48) {
+        const mode = Number(fields[1])
+        const values = mode === 2 ? [2, ...fields.slice(-3).map(Number)] : [mode, Number(fields[2])]
+        const { color } = extendedColor(values)
+        if (color !== undefined) next = code === 38 ? { ...next, f: color } : { ...next, b: color }
+      } else if (code === 4) {
+        const { u: _a, ...rest } = next
+        next = fields[1] === '0' ? rest : { ...rest, u: true }
+      }
+      continue
+    }
+    const code = Number(part === '' ? '0' : part)
+    if (code === 38 || code === 48) {
+      const rest = parts.slice(i + 1).map(Number)
+      const { color, used } = extendedColor(rest)
+      i += used
+      if (color !== undefined) next = code === 38 ? { ...next, f: color } : { ...next, b: color }
+    } else if (code === 0) next = {}
+    else if (code === 1) next = { ...next, B: true }
+    else if (code === 2) next = { ...next, d: true }
+    else if (code === 3) next = { ...next, i: true }
+    else if (code === 4) next = { ...next, u: true }
+    else if (code === 7) next = { ...next, v: true }
+    else if (code === 22) { const { B: _a, d: _b, ...rest } = next; next = rest }
+    else if (code === 23) { const { i: _a, ...rest } = next; next = rest }
+    else if (code === 24) { const { u: _a, ...rest } = next; next = rest }
+    else if (code === 27) { const { v: _a, ...rest } = next; next = rest }
+    else if (code === 39) { const { f: _a, ...rest } = next; next = rest }
+    else if (code === 49) { const { b: _a, ...rest } = next; next = rest }
+    else if (code >= 30 && code <= 37) next = { ...next, f: BASE_COLORS[code - 30] as string }
+    else if (code >= 40 && code <= 47) next = { ...next, b: BASE_COLORS[code - 40] as string }
+    else if (code >= 90 && code <= 97) next = { ...next, f: BASE_COLORS[code - 90 + 8] as string }
+    else if (code >= 100 && code <= 107) next = { ...next, b: BASE_COLORS[code - 100 + 8] as string }
+  }
+
+  return next
+}
+
+// A CSI sequence, an OSC or other string sequence up to its end, or a lone escape.
+const ESCAPE = /\u001b(?:\[([0-9;:?<=>]*)[ -/]*([@-~])|[\]PX^_][^\u0007\u001b]*(?:\u0007|\u001b[\s\S])?|[\s\S]?)/g
+
+/**
+ * Reads `capture-pane -e` lines into painted runs. tmux carries a style on from
+ * one line to the next, so one state runs through them; every sequence but a
+ * color or an attribute is dropped, so none ever reaches the surface.
+ */
+export function parseStyledLines(lines: readonly string[]): Span[][] {
+  let style: Style = {}
+
+  return lines.map(line => {
+    const spans: Span[] = []
+    const push = (raw: string): void => {
+      const t = sanitize(raw).replace(/\n/g, ' ')
+      if (t === '') return
+      const last = spans.at(-1)
+      if (last !== undefined && JSON.stringify(last.s ?? {}) === JSON.stringify(style)) {
+        last.t += t
+      } else {
+        spans.push(Object.keys(style).length === 0 ? { t } : { t, s: style })
+      }
+    }
+    let at = 0
+    for (const match of line.matchAll(ESCAPE)) {
+      push(line.slice(at, match.index))
+      at = match.index + match[0].length
+      if (match[2] === 'm' && /^[0-9;:]*$/.test(match[1] ?? '')) {
+        style = applySgr(style, match[1] ?? '')
+      }
+    }
+    push(line.slice(at))
+
+    return spans
+  })
+}
+
+/** The same screen with no paint, for one too heavy to travel as props. */
+export function withoutStyles(lines: readonly Span[][]): Span[][] {
+  return lines.map(spans => {
+    const t = spans.map(span => span.t).join('')
+
+    return t === '' ? [] : [{ t }]
+  })
+}
+
+/** Reads `capture-pane -p -e` output followed by one `x y flag` line. */
 export function parseScreen(stdout: string): Screen {
   const all = stdout.replace(/\n$/, '').split('\n')
   const status = /^(\d+) (\d+) ([01])$/.exec(all.at(-1) ?? '')
-  if (status === null) return { lines: all.map(sanitize), cursor: null }
+  if (status === null) return { lines: parseStyledLines(all), cursor: null }
   all.pop()
 
   return {
-    lines: all.map(sanitize),
+    lines: parseStyledLines(all),
     cursor:
       status[3] === '1' ? { x: Number(status[1]), y: Number(status[2]) } : null,
   }

@@ -2,8 +2,10 @@
 // the hooks module hands it and posts the keys pressed while it has the focus.
 import type { ClientKeyEvent, ClientModule, JsonValue } from 'claude-code'
 
+import type { Span } from './lib'
+
 export type ViewProps = {
-  lines: string[]
+  lines: Span[][]
   cursor: { x: number; y: number } | null
   rows: number
   note?: string
@@ -15,6 +17,34 @@ const BEAT_MS = 50
 const IDLE_BEATS_PER_REFRESH = 5
 // After a key the screen is about to change: look on every beat for a while.
 const EAGER_BEATS = 20
+
+/** The runs of a line with the cell under the cursor split out and marked. */
+function markCursor(spans: readonly Span[], at: number): (Span & { isCursor?: true })[] {
+  const out: (Span & { isCursor?: true })[] = []
+  let column = 0
+  let isDrawn = false
+  for (const span of spans) {
+    const chars = [...span.t]
+    const start = column
+    column += chars.length
+    if (isDrawn || at < start || at >= column) {
+      out.push(span)
+      continue
+    }
+    const before = chars.slice(0, at - start).join('')
+    const after = chars.slice(at - start + 1).join('')
+    if (before !== '') out.push({ ...span, t: before })
+    out.push({ ...span, t: chars[at - start] ?? ' ', isCursor: true })
+    if (after !== '') out.push({ ...span, t: after })
+    isDrawn = true
+  }
+  if (!isDrawn) {
+    if (at > column) out.push({ t: ' '.repeat(at - column) })
+    out.push({ t: ' ', isCursor: true })
+  }
+
+  return out
+}
 
 const Terminal: ClientModule<ViewProps, Local> = (props, surface) => {
   const { Box, Text } = surface.elements
@@ -45,16 +75,25 @@ const Terminal: ClientModule<ViewProps, Local> = (props, surface) => {
 
   return (
     <Box flexDirection="column">
-      {props.lines.slice(0, props.rows).map((line, y) => {
-        if (props.cursor?.y !== y) return <Text wrap="truncate-end">{line === '' ? ' ' : line}</Text>
-        const chars = [...line]
-        const at = props.cursor.x
+      {props.lines.slice(0, props.rows).map((spans, y) => {
+        const runs = props.cursor?.y === y ? markCursor(spans, props.cursor.x) : spans
+        if (runs.length === 0) return <Text wrap="truncate-end"> </Text>
 
         return (
           <Text wrap="truncate-end">
-            {chars.slice(0, at).join('').padEnd(at, ' ')}
-            <Text inverse>{chars[at] ?? ' '}</Text>
-            {chars.slice(at + 1).join('')}
+            {runs.map(run => (
+              <Text
+                color={run.s?.f}
+                backgroundColor={run.s?.b}
+                bold={run.s?.B}
+                dimColor={run.s?.d}
+                italic={run.s?.i}
+                underline={run.s?.u}
+                inverse={'isCursor' in run ? run.s?.v !== true : run.s?.v}
+              >
+                {run.t}
+              </Text>
+            ))}
           </Text>
         )
       })}
