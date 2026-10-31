@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+
+Outside tmux, `/term <command>` opens the pane beside the chat as well, so the command no longer
+runs unseen.
+
 ## 0.3.1
 
 The pane closes itself when the terminal has ended, instead of staying open with nothing to show.

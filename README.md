@@ -30,7 +30,7 @@ once.
 | You type | What happens |
 | --- | --- |
 | `/term` | Opens the terminal: the pane beside the chat, or in tmux, the neighbouring pane (split off if there is none). |
-| `/term npm test` | Types `npm test` into the terminal and presses Enter. |
+| `/term npm test` | Types `npm test` into the terminal and presses Enter. Outside tmux it opens the pane beside the chat too. |
 | `why did this fail? @term` | Replaces `@term` with what the terminal's screen shows. |
 | `@term:500` | The same, with the last 500 lines of scrollback (5000 at most). |
 | `/term-pane` | In tmux: lists all panes. `/term-pane %3` connects to that one, `/term-pane auto` goes back to the neighbour. |

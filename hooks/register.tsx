@@ -152,6 +152,17 @@ async function sendAfterYes($: Engine, command: string): Promise<Pane> {
   return target
 }
 
+/**
+ * After a send, outside tmux: the terminal is otherwise hidden, so the command
+ * would run unseen. In tmux it already shows in its own pane. The command has
+ * gone by now, so a pane that fails to open must not read as a failed send.
+ */
+async function showSent($: Engine): Promise<void> {
+  if (await selfPane($) !== undefined) return
+  lastSize = ''
+  await $.ui.open({ id: PANE_ID, title: 'Terminal' }).catch(() => undefined)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
@@ -262,12 +273,14 @@ export const register: Register = on => {
       // A person typing /term has said it; anything else running the command has not.
       if (!isPerson(e.origin)) {
         const sent = await sendAfterYes($, command)
+        await showSent($)
 
         return { text: `Sent to terminal ${sent.pane}.` }
       }
       const target = await resolveTerminal($, { cwd, create: true })
       if (target === undefined) return { text: 'No terminal is available.' }
       await sendCommand($, target, command)
+      await showSent($)
 
       return { text: `Sent to terminal ${target.pane}.` }
     } catch (error) {

@@ -179,6 +179,120 @@ test('the pane closes itself when the terminal has ended', async ($, on) => {
   await ui.unmount()
 })
 
+/** No tmux around Claude: the mod's own hidden terminal, and a count of the panes opened. */
+function outsideTmux(on: any, answer = 'Send', placed: 'placed' | 'unplaced' | 'throws' = 'placed') {
+  const calls: Calls = []
+  const opened: string[] = []
+  mock.env(on, {})
+  on('ui.open', (_: unknown, e: { id: string }) => {
+    opened.push(e.id)
+    if (placed === 'throws') throw new Error('no pane here')
+
+    return { value: placed === 'placed' ? { isPlaced: true } : { isPlaced: false, reason: 'this surface has no room' } }
+  })
+  on('process.run', (_: unknown, e: { readonly argv: readonly string[] }) => {
+    calls.push([...e.argv])
+    const stdout = e.argv.includes('new-session') || e.argv.includes('list-panes') ? `${markOf(e.argv)}${row('%9')}` : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: { questions: { question: string }[] }) => ({
+    result: { questions: e.questions, answers: { [e.questions[0]!.question]: answer } },
+  }))
+
+  return { calls, opened }
+}
+
+const PERSON = { kind: 'composer' }
+const PEER = { kind: 'peer' }
+const term = ($: any, args: string, origin: unknown) => $.command.run({ command: 'term', args, origin } as never)
+
+test('/term <command> from the person opens the pane outside tmux, and sends', async ($, on) => {
+  const { calls, opened } = outsideTmux(on)
+  const ran = await term($, 'ls', PERSON)
+  expect(ran.text).toMatch(/^Sent to terminal/)
+  expect(opened).toEqual(['terminal'])
+  expect(writes(calls).map(argv => argv.slice(-1)[0])).toEqual(['ls', 'Enter'])
+})
+
+test('/term <command> confirmed for anyone else opens the pane outside tmux, and sends', async ($, on) => {
+  const { calls, opened } = outsideTmux(on, 'Send')
+  const ran = await term($, 'ls', PEER)
+  expect(ran.text).toMatch(/^Sent to terminal/)
+  expect(opened).toEqual(['terminal'])
+  expect(writes(calls).map(argv => argv.slice(-1)[0])).toEqual(['ls', 'Enter'])
+})
+
+test('/term <command> not confirmed opens nothing and sends nothing', async ($, on) => {
+  const { calls, opened } = outsideTmux(on, 'Cancel')
+  const ran = await term($, 'ls', PEER)
+  expect(ran.text).toMatch(/not confirm/)
+  expect(opened).toEqual([])
+  expect(writes(calls)).toEqual([])
+})
+
+test('/term <command> refused opens nothing and sends nothing', async ($, on) => {
+  const { calls, opened } = outsideTmux(on)
+  const ran = await term($, 'a\nb', PERSON)
+  expect(ran.text).toMatch(/one line/)
+  expect(opened).toEqual([])
+  expect(writes(calls)).toEqual([])
+})
+
+for (const placed of ['unplaced', 'throws'] as const) {
+  test(`/term <command> still sends where the pane ${placed === 'throws' ? 'fails to open' : 'cannot be placed'}`, async ($, on) => {
+    const { calls, opened } = outsideTmux(on, 'Send', placed)
+    const ran = await term($, 'ls', PERSON)
+    expect(ran.text).toMatch(/^Sent to terminal/)
+    expect(opened).toEqual(['terminal'])
+    expect(writes(calls).map(argv => argv.slice(-1)[0])).toEqual(['ls', 'Enter'])
+  })
+}
+
+for (const origin of [PERSON, PEER]) {
+  test(`/term <command> in tmux sends without opening a pane (${origin.kind})`, async ($, on) => {
+    const calls = engine(on, 'Send')
+    const opened: string[] = []
+    on('ui.open', (_: unknown, e: { id: string }) => {
+      opened.push(e.id)
+
+      return { value: { isPlaced: true } }
+    })
+    const ran = await term($, 'ls', origin)
+    expect(ran.text).toMatch(/^Sent to terminal %2/)
+    expect(opened).toEqual([])
+    expect(writes(calls).map(argv => argv.slice(-1)[0])).toEqual(['ls', 'Enter'])
+  })
+}
+
+test('/term <command> sizes the terminal again, as /term does', async ($, on) => {
+  const { calls } = outsideTmux(on)
+  await term($, '', PERSON)
+  const ui = await $.ui.mount({
+    plugin: 'terminal-mod',
+    component: 'Pane',
+    requestId: 'terminal',
+    surface: 'terminal',
+    props: { title: 'Terminal', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  const resizes = () => calls.filter(argv => argv.includes('resize-window')).length
+  await ui.post({ size: { columns: 80, rows: 18 } })
+  const before = resizes()
+  expect(before).toBeGreaterThan(0)
+  await term($, 'ls', PERSON)
+  await ui.post({ size: { columns: 80, rows: 18 } })
+  expect(resizes()).toBeGreaterThan(before)
+  await ui.unmount()
+})
+
+test('terminal_send outside tmux stays hidden: it sends without opening the pane', async ($, on) => {
+  const { calls, opened } = outsideTmux(on, 'Send')
+  const ran = await $.tool.call({ tool: SEND, command: 'ls' })
+  expect(ran.deny).toBeUndefined()
+  expect(opened).toEqual([])
+  expect(writes(calls).map(argv => argv.slice(-1)[0])).toEqual(['ls', 'Enter'])
+})
+
 test('surfaces without a Client say so', async ($, on) => {
   engine(on)
   const ui = await $.ui.mount({
