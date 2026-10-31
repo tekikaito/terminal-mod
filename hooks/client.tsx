@@ -9,27 +9,31 @@ export type ViewProps = {
   note?: string
 }
 
-type Local = { queue: ClientKeyEvent[]; ticks: number }
+type Local = { queue: ClientKeyEvent[]; ticks: number; eager: number }
 
-const FRAME_MS = 80
-const TICKS_PER_REFRESH = 3
+const BEAT_MS = 50
+const IDLE_BEATS_PER_REFRESH = 5
+// After a key the screen is about to change: look on every beat for a while.
+const EAGER_BEATS = 20
 
 const Terminal: ClientModule<ViewProps, Local> = (props, surface) => {
   const { Box, Text } = surface.elements
 
   if (surface.state === undefined) {
-    const local: Local = { queue: [], ticks: 0 }
+    const local: Local = { queue: [], ticks: 0, eager: 0 }
     surface.setState(local)
     surface.onKey(event => {
       local.queue.push(event)
+      local.eager = EAGER_BEATS
     })
     // One post per beat, so a key can never be replaced by a refresh: a later
     // post in the same frame would take the place of an undelivered one.
-    surface.every(FRAME_MS, () => {
+    surface.every(BEAT_MS, () => {
       local.ticks += 1
       if (local.queue.length > 0) {
         surface.post({ keys: local.queue.splice(0) as unknown as JsonValue })
-      } else if (local.ticks % TICKS_PER_REFRESH === 0) {
+      } else if (local.eager > 0 || local.ticks % IDLE_BEATS_PER_REFRESH === 0) {
+        local.eager = Math.max(0, local.eager - 1)
         surface.post({ size: { columns: surface.columns, rows: surface.rows } })
       }
     })

@@ -50,16 +50,39 @@ let cwd: string | undefined
 // variable on purpose: a reload forgets it, which only means asking again.
 let isReadGranted = false
 let lastSize = ''
+let lastRows = 0
 let keyChain: Promise<unknown> = Promise.resolve()
+let lastView = ''
+let isRefreshing = false
 
 async function view($: Engine, rows: number) {
   const screen = await captureOwnedScreen($).catch(() => undefined)
   // A terminal started later is a new one, and needs sizing again.
   if (screen === undefined) lastSize = ''
-
-  return screen === undefined
+  const drawn = screen === undefined
     ? { lines: [], cursor: null, rows, note: CLOSED }
     : { lines: screen.lines, cursor: screen.cursor, rows }
+  lastView = JSON.stringify(drawn)
+
+  return drawn
+}
+
+/**
+ * The next props for the view, or none where the screen did not change: each
+ * new value redraws, so an idle terminal must cost nothing. One look at a time,
+ * so an older screen can never arrive after a newer one.
+ */
+async function refresh($: Engine, rows: number) {
+  if (isRefreshing) return {}
+  isRefreshing = true
+  try {
+    const before = lastView
+    const drawn = await view($, rows)
+
+    return lastView === before ? {} : { props: drawn }
+  } finally {
+    isRefreshing = false
+  }
 }
 
 /** Pressed keys reach the terminal in the order they were pressed. */
@@ -304,7 +327,8 @@ export const register: Register = on => {
     const data = e.data as { keys?: unknown; size?: { columns?: unknown; rows?: unknown } } | null
     if (Array.isArray(data?.keys)) {
       await pressKeys($, keysToTmux(data.keys as KeyEvent[]))
-      return {}
+
+      return lastRows > 0 ? refresh($, lastRows) : {}
     }
     const columns = data?.size?.columns
     const rows = data?.size?.rows
@@ -315,6 +339,8 @@ export const register: Register = on => {
       await resizeOwned($, Math.floor(columns), Math.floor(rows)).catch(() => undefined)
     }
 
-    return { props: await view($, rows) }
+    lastRows = rows
+
+    return refresh($, rows)
   })
 }
