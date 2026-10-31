@@ -402,7 +402,15 @@ export const register: Register = on => {
     }
 
     lastRows = rows
+    const next = await refresh($, rows)
+    // A shell that ended leaves nothing to look at, and Esc only moves the
+    // keyboard, so the pane would otherwise stay until its close mark is clicked.
+    if (lastView.includes(CLOSED)) {
+      await $.ui.close({ id: PANE_ID })
+      $.ui.toast('The terminal ended. Run /term to start a new one.')
+      return {}
+    }
 
-    return refresh($, rows)
+    return next
   })
 }

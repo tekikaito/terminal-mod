@@ -1,6 +1,6 @@
 {
   "name": "terminal-mod",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A terminal beside the chat: reference its output with @term and send it commands, each one confirmed.",
   "author": { "name": "Marc Gilbrecht" },
   "homepage": "https://github.com/tekikaito/terminal-mod",

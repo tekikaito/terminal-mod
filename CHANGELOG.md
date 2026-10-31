@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+The pane closes itself when the terminal has ended, instead of staying open with nothing to show.
+
 ## 0.3.0
 
 The pane scrolls through the terminal's history (wheel, PageUp, PageDown) and pastes the clipboard

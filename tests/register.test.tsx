@@ -146,6 +146,39 @@ test('the view forwards keys in order to the owned terminal only', async ($, on)
   await ui.unmount()
 })
 
+test('the pane closes itself when the terminal has ended', async ($, on) => {
+  const closed: string[] = []
+  let isAlive = true
+  mock.env(on, {})
+  on('command.register', () => ({ value: { command: 'x' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', (_: unknown, e: { id: string }) => {
+    closed.push(e.id)
+
+    return { value: undefined }
+  })
+  on('process.run', (_: unknown, e: { readonly argv: readonly string[] }) => {
+    const stdout = e.argv.includes('new-session') || e.argv.includes('list-panes') ? `${markOf(e.argv)}${row('%9')}` : e.argv.includes('capture-pane') ? 'prompt$\n0 0 1 0 0\n' : ''
+    const exitCode = e.argv.includes('capture-pane') && !isAlive ? 1 : 0
+
+    return { value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.command.run({ command: 'term', args: '' } as never)
+  const ui = await $.ui.mount({
+    plugin: 'terminal-mod',
+    component: 'Pane',
+    requestId: 'terminal',
+    surface: 'terminal',
+    props: { title: 'Terminal', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  })
+  await ui.post({ size: { columns: 80, rows: 18 } })
+  expect(closed).toEqual([])
+  isAlive = false
+  await ui.post({ size: { columns: 80, rows: 18 } })
+  expect(closed).toEqual(['terminal'])
+  await ui.unmount()
+})
+
 test('surfaces without a Client say so', async ($, on) => {
   engine(on)
   const ui = await $.ui.mount({
