@@ -3,6 +3,8 @@
 A terminal beside the Claude Code chat, connected both ways: pull what it shows into your prompt
 with `@term`, and let Claude send it commands, each one confirmed by you.
 
+![A shop server crashes in the terminal pane; Claude reads the error through @term, fixes the code and reruns it after asking for confirmation](assets/demo.gif)
+
 - **Runs in tmux?** The mod connects to the pane next to Claude. You keep a real terminal with
   your own theme, scrolling and everything else tmux gives you.
 - **Not in tmux?** `/term` starts a terminal in a pane beside the chat, on a private tmux server.
